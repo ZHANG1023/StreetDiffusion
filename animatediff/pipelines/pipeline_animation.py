@@ -429,7 +429,7 @@ class AnimationPipeline(DiffusionPipeline):
                         conditioning_scale=controlnet_conditioning_scale,
                         guess_mode=False, return_dict=False,
                     )
-
+                
                 # predict the noise residual
                 noise_pred = self.unet(
                     latent_model_input, t, 
