@@ -17,7 +17,6 @@ class InflatedConv3d(nn.Conv2d):
 
         return x
 
-
 class InflatedGroupNorm(nn.GroupNorm):
     def forward(self, x):
         video_length = x.shape[2]

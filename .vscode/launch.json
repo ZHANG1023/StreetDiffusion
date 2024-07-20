@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--config","configs/prompts/v3/v3-1-T2V.yaml"]
+            "args": ["--config","configs/prompts/v3/v3-3-sketch-RealisticVision.yaml"]
         }
     ]
 }

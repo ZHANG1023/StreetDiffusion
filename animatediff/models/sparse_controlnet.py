@@ -45,6 +45,40 @@ class SparseControlNetOutput(BaseOutput):
     down_block_res_samples: Tuple[torch.Tensor]
     mid_block_res_sample: torch.Tensor
 
+class Coordinates3DConditioningEmbedding(nn.Module):
+    def __init__(
+        self,
+        conditioning_embedding_channels: int,
+        conditioning_channels: int = 3,
+        block_out_channels: Tuple[int] = (16, 32, 96, 256),
+    ):
+        super().__init__()
+
+        self.conv_in = InflatedConv3d(conditioning_channels, block_out_channels[0], kernel_size=3, padding=1)
+
+        self.blocks = nn.ModuleList([])
+
+        for i in range(len(block_out_channels) - 1):
+            channel_in = block_out_channels[i]
+            channel_out = block_out_channels[i + 1]
+            self.blocks.append(InflatedConv3d(channel_in, channel_in, kernel_size=3, padding=1))
+            self.blocks.append(InflatedConv3d(channel_in, channel_out, kernel_size=3, padding=1, stride=2))
+
+        self.conv_out = zero_module(
+            InflatedConv3d(block_out_channels[-1], conditioning_embedding_channels, kernel_size=3, padding=1)
+        )
+
+    def forward(self, conditioning):
+        embedding = self.conv_in(conditioning)
+        embedding = F.silu(embedding)
+
+        for block in self.blocks:
+            embedding = block(embedding)
+            embedding = F.silu(embedding)
+
+        embedding = self.conv_out(embedding)
+
+        return embedding
 
 class SparseControlNetConditioningEmbedding(nn.Module):
     def __init__(
@@ -70,7 +104,8 @@ class SparseControlNetConditioningEmbedding(nn.Module):
         )
 
     def forward(self, conditioning):
-        embedding = self.conv_in(conditioning)
+        #import pdb; pdb.set_trace()
+        embedding = self.conv_in(conditioning)  # shape of conditioning: [1,4,16,512,512]
         embedding = F.silu(embedding)
 
         for block in self.blocks:
@@ -116,7 +151,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         resnet_time_scale_shift: str = "default",
         projection_class_embeddings_input_dim: Optional[int] = None,
         controlnet_conditioning_channel_order: str = "rgb",
-        conditioning_embedding_out_channels: Optional[Tuple[int]] = (16, 32, 96, 256),
+        conditioning_embedding_out_channels: Optional[Tuple[int]] = (64, 128, 128, 256),
         global_pool_conditions: bool = False,
 
         use_motion_module         = True,
@@ -183,7 +218,8 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
                 InflatedConv3d(conditioning_channels, block_out_channels[0], kernel_size=conv_in_kernel, padding=conv_in_padding)
             )
         else:
-            self.controlnet_cond_embedding = SparseControlNetConditioningEmbedding(
+            ### change the con
+            self.controlnet_cond_embedding = Coordinates3DConditioningEmbedding(
                 conditioning_embedding_channels=block_out_channels[0],
                 block_out_channels=conditioning_embedding_out_channels,
                 conditioning_channels=conditioning_channels,

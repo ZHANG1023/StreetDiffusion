@@ -95,7 +95,7 @@ def main(args):
                     return image
             else: image_norm = lambda x: x
                 
-            controlnet_images = [image_norm(image_transforms(Image.open(path).convert("RGB"))) for path in image_paths]
+            controlnet_images = [image_norm(image_transforms(Image.open(path).convert("RGB"))) for path in image_paths] 
 
             os.makedirs(os.path.join(savedir, "control_images"), exist_ok=True)
             for i, image in enumerate(controlnet_images):
@@ -161,7 +161,7 @@ def main(args):
                 height              = model_config.H,
                 video_length        = model_config.L,
 
-                controlnet_images = controlnet_images,
+                controlnet_images = controlnet_images, # [1, 3, 1, 512, 512]
                 controlnet_image_index = model_config.get("controlnet_image_indexs", [0]),
             ).videos
             samples.append(sample)
