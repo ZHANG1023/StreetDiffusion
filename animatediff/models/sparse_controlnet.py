@@ -485,11 +485,11 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
 
     def forward(
         self,
-        sample: torch.FloatTensor,
+        sample: torch.FloatTensor, # latent_model_input
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor, # controlnet_prompt_embeds = text_embeddings
 
-        controlnet_cond: torch.FloatTensor,
+        controlnet_cond: torch.FloatTensor, # controlnet_cond
         conditioning_mask: Optional[torch.FloatTensor] = None,
 
         conditioning_scale: float = 1.0,
@@ -523,7 +523,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
-        timesteps             = timesteps.repeat(sample.shape[0] // timesteps.shape[0])
+        timesteps = timesteps.repeat(sample.shape[0] // timesteps.shape[0])
         encoder_hidden_states = encoder_hidden_states.repeat(sample.shape[0] // encoder_hidden_states.shape[0], 1, 1)
 
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
