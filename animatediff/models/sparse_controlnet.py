@@ -465,7 +465,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
     ) -> Union[SparseControlNetOutput, Tuple]:
 
         # set input noise to zero
-        if self.set_noisy_sample_input_to_zero:
+        if self.set_noisy_sample_input_to_zero: # True
             sample = torch.zeros_like(sample).to(sample.device)
 
         # prepare attention_mask
