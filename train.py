@@ -479,7 +479,6 @@ def main(
     dist.destroy_process_group()
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",   type=str, required=True)
