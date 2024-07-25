@@ -40,7 +40,6 @@ from animatediff.pipelines.pipeline_animation import AnimationPipeline
 from animatediff.utils.util import save_videos_grid, zero_rank_print
 
 
-
 def init_dist(launcher="slurm", backend='nccl', port=29500, **kwargs):
     """Initializes distributed environment."""
     if launcher == 'pytorch':
@@ -71,7 +70,6 @@ def init_dist(launcher="slurm", backend='nccl', port=29500, **kwargs):
         raise NotImplementedError(f'Not implemented launcher type: `{launcher}`!')
     
     return local_rank
-
 
 
 def main(
@@ -234,7 +232,7 @@ def main(
         shuffle=True,
         seed=global_seed,
     )
-
+    
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
