@@ -34,11 +34,13 @@ from diffusers.utils.import_utils import is_xformers_available
 import transformers
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from animatediff.data.dataset import WebVid10M
+from animatediff.data.dataset import WebVid10M,dummy_WebVid10M
 from animatediff.models.unet import UNet3DConditionModel
 from animatediff.pipelines.pipeline_animation import AnimationPipeline
 from animatediff.utils.util import save_videos_grid, zero_rank_print
 
+
+# torchrun --nnodes=1 --nproc_per_node=7 train.py --config /disk1/haozhang/AnimateDiff/configs/training/v1/training.yaml
 
 
 def init_dist(launcher="slurm", backend='nccl', port=29500, **kwargs):
