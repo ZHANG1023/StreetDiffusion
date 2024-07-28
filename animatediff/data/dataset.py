@@ -61,7 +61,7 @@ class dummy_WebVid10M(Dataset):
 
     def __getitem__(self, idx):
        
-        pixel_values = torch.rand(self.sample_n_frames,3,self.sample_size[0],self.sample_size[0])
+        pixel_values = torch.rand(self.sample_n_frames,3,self.sample_size,self.sample_size)
         name = ""
    
         pixel_values = self.pixel_transforms(pixel_values)
