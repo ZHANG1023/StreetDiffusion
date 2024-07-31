@@ -24,7 +24,7 @@ from diffusers.schedulers import (
     PNDMScheduler,
 )
 from diffusers.utils import deprecate, logging, BaseOutput
-
+from ..models.positional_encoding import get_embedder
 from einops import rearrange
 
 from ..models.unet import UNet3DConditionModel
@@ -57,6 +57,8 @@ class AnimationPipeline(DiffusionPipeline):
             DPMSolverMultistepScheduler,
         ],
         controlnet: Union[SparseControlNetModel, None] = None,
+        multires: int = 4,
+        i_embed: int = 0,
     ):
         super().__init__()
 
@@ -117,6 +119,10 @@ class AnimationPipeline(DiffusionPipeline):
             controlnet=controlnet,
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+
+        embed_fn, out_ch = get_embedder(multires, i_embed)
+        self.embed_fn = embed_fn
+        self.out_ch = out_ch
 
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
@@ -409,16 +415,19 @@ class AnimationPipeline(DiffusionPipeline):
 
                     controlnet_images = controlnet_images.to(latents.device)
 
-                    controlnet_cond_shape    = list(controlnet_images.shape)
-                    controlnet_cond_shape[2] = video_length
-                    controlnet_cond = torch.zeros(controlnet_cond_shape).to(latents.device)
+                    controlnet_cond_shape = list(controlnet_images.shape)
 
+                    assert controlnet_cond_shape[2] == video_length
+                    ### culculate the 3D coordinates positional encoding (same as the NeRF 3D coordinate positional encoding method)
+                    controlnet_images = self.embed_fn(controlnet_images.view(-1,1))
+                    controlnet_cond_shape +=[self.out_ch]
+                    controlnet_cond = controlnet_images.view(controlnet_cond_shape)
+                    
+                    ###
                     controlnet_conditioning_mask_shape    = list(controlnet_cond.shape)
                     controlnet_conditioning_mask_shape[1] = 1
                     controlnet_conditioning_mask          = torch.zeros(controlnet_conditioning_mask_shape).to(latents.device)
 
-                    assert controlnet_images.shape[2] >= len(controlnet_image_index)
-                    controlnet_cond[:,:,controlnet_image_index] = controlnet_images[:,:,:len(controlnet_image_index)]
                     controlnet_conditioning_mask[:,:,controlnet_image_index] = 1
 
                     down_block_additional_residuals, mid_block_additional_residual = self.controlnet(
