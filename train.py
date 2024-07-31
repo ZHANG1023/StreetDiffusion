@@ -178,7 +178,7 @@ def main(
     vae          = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
     tokenizer    = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
-    if not image_finetune:
+    if not image_finetune: # image_finetune should be false
         unet = UNet3DConditionModel.from_pretrained_2d(
             pretrained_model_path, subfolder="unet", 
             unet_additional_kwargs=OmegaConf.to_container(unet_additional_kwargs)
@@ -197,6 +197,64 @@ def main(
         zero_rank_print(f"missing keys: {len(m)}, unexpected keys: {len(u)}")
         assert len(u) == 0
         
+    # initialze our model from unet
+    controlnet = controlnet_images = None
+    if model_config.get("controlnet_path", "") != "":
+        assert model_config.get("controlnet_images", "") != ""
+        assert model_config.get("controlnet_config", "") != ""
+        
+        unet.config.num_attention_heads = 8
+        unet.config.projection_class_embeddings_input_dim = None
+
+        controlnet_config = OmegaConf.load(model_config.controlnet_config)
+        controlnet = SparseControlNetModel.from_unet(unet, controlnet_additional_kwargs=controlnet_config.get("controlnet_additional_kwargs", {}))
+
+        print(f"loading controlnet checkpoint from {model_config.controlnet_path} ...")
+        controlnet_state_dict = torch.load(model_config.controlnet_path, map_location="cpu")
+        controlnet_state_dict = controlnet_state_dict["controlnet"] if "controlnet" in controlnet_state_dict else controlnet_state_dict
+        controlnet_state_dict.pop("animatediff_config", "")
+        controlnet.load_state_dict(controlnet_state_dict)
+        controlnet.cuda()
+
+        image_paths = model_config.controlnet_images
+        if isinstance(image_paths, str): image_paths = [image_paths]
+
+        print(f"controlnet image paths:")
+        for path in image_paths: print(path)
+        assert len(image_paths) <= model_config.L
+
+        image_transforms = transforms.Compose([
+            transforms.RandomResizedCrop(
+                (model_config.H, model_config.W), (1.0, 1.0), 
+                ratio=(model_config.W/model_config.H, model_config.W/model_config.H)
+            ),
+            transforms.ToTensor(),
+        ])
+
+        if model_config.get("normalize_condition_images", False):
+            def image_norm(image):
+                image = image.mean(dim=0, keepdim=True).repeat(3,1,1)
+                image -= image.min()
+                image /= image.max()
+                return image
+        else: image_norm = lambda x: x
+            
+        controlnet_images = [image_norm(image_transforms(Image.open(path).convert("RGB"))) for path in image_paths]
+
+        os.makedirs(os.path.join(savedir, "control_images"), exist_ok=True)
+        for i, image in enumerate(controlnet_images):
+            Image.fromarray((255. * (image.numpy().transpose(1,2,0))).astype(np.uint8)).save(f"{savedir}/control_images/{i}.png")
+
+        controlnet_images = torch.stack(controlnet_images).unsqueeze(0).cuda()
+        controlnet_images = rearrange(controlnet_images, "b f c h w -> b c f h w")
+
+        if controlnet.use_simplified_condition_embedding:
+            num_controlnet_images = controlnet_images.shape[2]
+            controlnet_images = rearrange(controlnet_images, "b c f h w -> (b f) c h w")
+            controlnet_images = vae.encode(controlnet_images * 2. - 1.).latent_dist.sample() * 0.18215
+            controlnet_images = rearrange(controlnet_images, "(b f) c h w -> b c f h w", f=num_controlnet_images)
+
+
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
@@ -500,8 +558,9 @@ if __name__ == "__main__":
     parser.add_argument("--config",   type=str, required=True)
     #parser.add_argument("--launcher", type=str, choices=["pytorch", "slurm"], default="pytorch")
     parser.add_argument("--wandb",    action="store_true")
-    args = parser.parse_args()
 
+    args = parser.parse_args()
+    
     name   = Path(args.config).stem
     config = OmegaConf.load(args.config)
 
