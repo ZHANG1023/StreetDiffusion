@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import functional as F
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import BaseOutput, logging
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
@@ -45,13 +44,12 @@ class SparseControlNetOutput(BaseOutput):
     down_block_res_samples: Tuple[torch.Tensor]
     mid_block_res_sample: torch.Tensor
 
-
-class SparseControlNetConditioningEmbedding(nn.Module):
+class Coordinates3DConditioningEmbedding(nn.Module):
     def __init__(
         self,
         conditioning_embedding_channels: int,
-        conditioning_channels: int = 3,
-        block_out_channels: Tuple[int] = (16, 32, 96, 256),
+        conditioning_channels: int = 33,
+        block_out_channels: Tuple[int] = (64, 96, 128, 256), # Assume L = 4, thus the input dimension should be 4*2*3 = 24
     ):
         super().__init__()
 
@@ -81,6 +79,42 @@ class SparseControlNetConditioningEmbedding(nn.Module):
 
         return embedding
 
+class SparseControlNetConditioningEmbedding(nn.Module):
+    def __init__(
+        self,
+        conditioning_embedding_channels: int,
+        conditioning_channels: int = 3,
+        block_out_channels: Tuple[int] = (16, 32, 96, 256),
+    ):
+        super().__init__()
+
+        self.conv_in = InflatedConv3d(conditioning_channels, block_out_channels[0], kernel_size=3, padding=1)
+
+        self.blocks = nn.ModuleList([])
+
+        for i in range(len(block_out_channels) - 1):
+            channel_in = block_out_channels[i]
+            channel_out = block_out_channels[i + 1]
+            self.blocks.append(InflatedConv3d(channel_in, channel_in, kernel_size=3, padding=1))
+            self.blocks.append(InflatedConv3d(channel_in, channel_out, kernel_size=3, padding=1, stride=2))
+
+        self.conv_out = zero_module(
+            InflatedConv3d(block_out_channels[-1], conditioning_embedding_channels, kernel_size=3, padding=1)
+        )
+
+    def forward(self, conditioning):
+        #import pdb; pdb.set_trace()
+        embedding = self.conv_in(conditioning)  # shape of conditioning: [1,4,16,512,512]
+        embedding = F.silu(embedding)
+
+        for block in self.blocks:
+            embedding = block(embedding)
+            embedding = F.silu(embedding)
+
+        embedding = self.conv_out(embedding)
+
+        return embedding
+
 
 class SparseControlNetModel(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
@@ -89,7 +123,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
     def __init__(
         self,
         in_channels: int = 4,
-        conditioning_channels: int = 3,
+        conditioning_channels: int = 24,  # Assume L = 4, thus the conditioning_channels is 4*2*3 = 24
         flip_sin_to_cos: bool = True,
         freq_shift: int = 0,
         down_block_types: Tuple[str] = (
@@ -116,7 +150,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         resnet_time_scale_shift: str = "default",
         projection_class_embeddings_input_dim: Optional[int] = None,
         controlnet_conditioning_channel_order: str = "rgb",
-        conditioning_embedding_out_channels: Optional[Tuple[int]] = (16, 32, 96, 256),
+        conditioning_embedding_out_channels: Optional[Tuple[int]] = (64, 128, 128, 256),
         global_pool_conditions: bool = False,
 
         use_motion_module         = True,
@@ -183,7 +217,8 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
                 InflatedConv3d(conditioning_channels, block_out_channels[0], kernel_size=conv_in_kernel, padding=conv_in_padding)
             )
         else:
-            self.controlnet_cond_embedding = SparseControlNetConditioningEmbedding(
+            ### change the condition
+            self.controlnet_cond_embedding = Coordinates3DConditioningEmbedding(
                 conditioning_embedding_channels=block_out_channels[0],
                 block_out_channels=conditioning_embedding_out_channels,
                 conditioning_channels=conditioning_channels,
@@ -312,7 +347,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
             motion_module_type=motion_module_type,
             motion_module_kwargs=motion_module_kwargs,
         )
-
+        
     @classmethod
     def from_unet(
         cls,
@@ -415,7 +450,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
             # make smallest slice possible
             slice_size = num_sliceable_layers * [1]
 
-        slice_size = num_sliceable_layers * [slice_size] if not isinstance(slice_size, list) else slice_size
+        slice_size = num_sliceable_layers * [slice_size] if not isinstance6(slice_size, list) else slice_size
 
         if len(slice_size) != len(sliceable_head_dims):
             raise ValueError(
@@ -449,11 +484,11 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
 
     def forward(
         self,
-        sample: torch.FloatTensor,
+        sample: torch.FloatTensor, # latent_model_input
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor, # controlnet_prompt_embeds = text_embeddings
 
-        controlnet_cond: torch.FloatTensor,
+        controlnet_cond: torch.FloatTensor, # controlnet_cond
         conditioning_mask: Optional[torch.FloatTensor] = None,
 
         conditioning_scale: float = 1.0,
@@ -465,7 +500,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
     ) -> Union[SparseControlNetOutput, Tuple]:
 
         # set input noise to zero
-        if self.set_noisy_sample_input_to_zero: # True
+        if self.set_noisy_sample_input_to_zero: # true
             sample = torch.zeros_like(sample).to(sample.device)
 
         # prepare attention_mask
@@ -487,12 +522,11 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
-        timesteps             = timesteps.repeat(sample.shape[0] // timesteps.shape[0])
+        timesteps = timesteps.repeat(sample.shape[0] // timesteps.shape[0])
         encoder_hidden_states = encoder_hidden_states.repeat(sample.shape[0] // encoder_hidden_states.shape[0], 1, 1)
 
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timesteps = timesteps.expand(sample.shape[0])
-
         t_emb = self.time_proj(timesteps)
 
         # timesteps does not contain any weights and will always return f32 tensors
@@ -516,6 +550,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         
         if self.concate_conditioning_mask:
             controlnet_cond = torch.cat([controlnet_cond, conditioning_mask], dim=1)
+
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
         
         sample = sample + controlnet_cond
