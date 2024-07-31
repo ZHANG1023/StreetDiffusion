@@ -39,7 +39,8 @@ from animatediff.models.unet import UNet3DConditionModel
 from animatediff.pipelines.pipeline_animation import AnimationPipeline
 from animatediff.utils.util import save_videos_grid, zero_rank_print
 
-
+import deepspeed
+from accelerate import Accelerator
 # torchrun --nnodes=1 --nproc_per_node=7 train.py --config /disk1/haozhang/AnimateDiff/configs/training/v1/training.yaml
 
 
@@ -81,8 +82,7 @@ def main(
     
     name: str,
     use_wandb: bool,
-    launcher: str,
-    
+ 
     output_dir: str,
     pretrained_model_path: str,
 
@@ -119,7 +119,7 @@ def main(
     checkpointing_epochs: int = 5,
     checkpointing_steps: int = -1,
 
-    mixed_precision_training: bool = True,
+    mixed_precision_training: bool = False,
     enable_xformers_memory_efficient_attention: bool = True,
 
     global_seed: int = 42,
@@ -127,11 +127,21 @@ def main(
 ):
     check_min_version("0.10.0.dev0")
 
+    accelerator = Accelerator(project_dir=os.path.join(output_dir, name))
+
+
+    torch.cuda.set_device(accelerator.device)
+
+
     # Initialize distributed training
-    local_rank      = init_dist(launcher=launcher)
-    global_rank     = dist.get_rank()
-    num_processes   = dist.get_world_size()
-    is_main_process = global_rank == 0
+    device = accelerator.device
+    local_rank = accelerator.local_process_index
+    global_rank = local_rank # since we only the the model on a single machine
+    # global_rank     = dist.get_rank()
+    # num_processes   = dist.get_world_size()
+    num_processes = accelerator.num_processes
+    is_main_process = accelerator.is_local_main_process
+    #print("is_main_process: ",is_main_process)
 
     seed = global_seed + global_rank
     torch.manual_seed(seed)
@@ -160,7 +170,7 @@ def main(
         os.makedirs(f"{output_dir}/samples", exist_ok=True)
         os.makedirs(f"{output_dir}/sanity_check", exist_ok=True)
         os.makedirs(f"{output_dir}/checkpoints", exist_ok=True)
-        OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
+        #OmegaConf.save(config, os.path.join(output_dir, 'config.yaml')) # error ? why
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDIMScheduler(**OmegaConf.to_container(noise_scheduler_kwargs))
@@ -229,25 +239,28 @@ def main(
 
     # Get the training dataset
     train_dataset = dummy_WebVid10M(**train_data, is_image=image_finetune)
-    distributed_sampler = DistributedSampler(
-        train_dataset,
-        num_replicas=num_processes,
-        rank=global_rank,
-        shuffle=True,
-        seed=global_seed,
-    )
+    # distributed_sampler = DistributedSampler(
+    #     train_dataset,
+    #     num_replicas=num_processes,
+    #     rank=global_rank,
+    #     shuffle=True,
+    #     seed=global_seed,
+    # )
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_batch_size,
         shuffle=False,
-        sampler=distributed_sampler,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=True,
     )
 
+    unet, optimizer, train_dataloader = accelerator.prepare(
+        unet, optimizer, train_dataloader
+    )
+    
     # Get the training iteration
     if max_train_steps == -1:
         assert max_train_epoch != -1
@@ -281,8 +294,8 @@ def main(
     validation_pipeline.enable_vae_slicing()
 
     # DDP warpper
-    unet.to(local_rank)
-    unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
+    unet.to(device)
+    #unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
@@ -311,7 +324,7 @@ def main(
     scaler = torch.cuda.amp.GradScaler() if mixed_precision_training else None
 
     for epoch in range(first_epoch, num_train_epochs):
-        train_dataloader.sampler.set_epoch(epoch)
+        #train_dataloader.sampler.set_epoch(epoch)
         unet.train()
         
         for step, batch in enumerate(train_dataloader):
@@ -384,7 +397,7 @@ def main(
             optimizer.zero_grad()
 
             # Backpropagate
-            if mixed_precision_training:
+            if mixed_precision_training: #  should be false when using deepspeed
                 scaler.scale(loss).backward()
                 """ >>> gradient clipping >>> """
                 scaler.unscale_(optimizer)
@@ -393,7 +406,7 @@ def main(
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                loss.backward()
+                accelerator.backward(loss)
                 """ >>> gradient clipping >>> """
                 torch.nn.utils.clip_grad_norm_(unet.parameters(), max_grad_norm)
                 """ <<< gradient clipping <<< """
@@ -485,11 +498,11 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",   type=str, required=True)
-    parser.add_argument("--launcher", type=str, choices=["pytorch", "slurm"], default="pytorch")
+    #parser.add_argument("--launcher", type=str, choices=["pytorch", "slurm"], default="pytorch")
     parser.add_argument("--wandb",    action="store_true")
     args = parser.parse_args()
 
     name   = Path(args.config).stem
     config = OmegaConf.load(args.config)
 
-    main(name=name, launcher=args.launcher, use_wandb=args.wandb, **config)
+    main(name=name, use_wandb=args.wandb, **config)
