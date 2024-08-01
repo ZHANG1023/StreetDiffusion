@@ -64,3 +64,8 @@ mixed_precision_training: false
 enable_xformers_memory_efficient_attention: True
 
 is_debug: False
+
+
+H: 512
+W: 512
+L: 8

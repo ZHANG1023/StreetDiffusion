@@ -22,6 +22,8 @@ import torch.distributed as dist
 from torch.optim.swa_utils import AveragedModel
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
+from animatediff.models.sparse_controlnet import SparseControlNetModel
+
 
 import diffusers
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -81,6 +83,7 @@ def main(
     image_finetune: bool,
     
     name: str,
+    coordinate_control_config: str,
     use_wandb: bool,
  
     output_dir: str,
@@ -126,6 +129,7 @@ def main(
     is_debug: bool = False,
 ):
     check_min_version("0.10.0.dev0")
+    control_config  = OmegaConf.load(coordinate_control_config)
 
     accelerator = Accelerator(project_dir=os.path.join(output_dir, name))
 
@@ -199,29 +203,29 @@ def main(
         
     # initialze our model from unet
     controlnet = controlnet_images = None
-    if model_config.get("controlnet_path", "") != "":
-        assert model_config.get("controlnet_images", "") != ""
-        assert model_config.get("controlnet_config", "") != ""
+    if control_config.get("controlnet_path", "") != "":
+        assert control_config.get("controlnet_images", "") != ""
+        assert control_config.get("controlnet_config", "") != ""
         
         unet.config.num_attention_heads = 8
         unet.config.projection_class_embeddings_input_dim = None
 
-        controlnet_config = OmegaConf.load(model_config.controlnet_config)
+        controlnet_config = OmegaConf.load(control_config.controlnet_config)
         controlnet = SparseControlNetModel.from_unet(unet, controlnet_additional_kwargs=controlnet_config.get("controlnet_additional_kwargs", {}))
 
-        print(f"loading controlnet checkpoint from {model_config.controlnet_path} ...")
-        controlnet_state_dict = torch.load(model_config.controlnet_path, map_location="cpu")
+        print(f"loading controlnet checkpoint from {control_config.controlnet_path} ...")
+        controlnet_state_dict = torch.load(control_config.controlnet_path, map_location="cpu")
         controlnet_state_dict = controlnet_state_dict["controlnet"] if "controlnet" in controlnet_state_dict else controlnet_state_dict
         controlnet_state_dict.pop("animatediff_config", "")
         controlnet.load_state_dict(controlnet_state_dict)
         controlnet.cuda()
 
-        image_paths = model_config.controlnet_images
+        image_paths = control_config.controlnet_images
         if isinstance(image_paths, str): image_paths = [image_paths]
 
         print(f"controlnet image paths:")
         for path in image_paths: print(path)
-        assert len(image_paths) <= model_config.L
+        assert len(image_paths) <= control_config.L
 
         image_transforms = transforms.Compose([
             transforms.RandomResizedCrop(
@@ -231,7 +235,7 @@ def main(
             transforms.ToTensor(),
         ])
 
-        if model_config.get("normalize_condition_images", False):
+        if control_config.get("normalize_condition_images", False):
             def image_norm(image):
                 image = image.mean(dim=0, keepdim=True).repeat(3,1,1)
                 image -= image.min()
@@ -558,10 +562,10 @@ if __name__ == "__main__":
     parser.add_argument("--config",   type=str, required=True)
     #parser.add_argument("--launcher", type=str, choices=["pytorch", "slurm"], default="pytorch")
     parser.add_argument("--wandb",    action="store_true")
-
+    parser.add_argument("--coordinate_control_config",   type=str, required=True)
     args = parser.parse_args()
     
     name   = Path(args.config).stem
     config = OmegaConf.load(args.config)
 
-    main(name=name, use_wandb=args.wandb, **config)
+    main(name=name, coordinate_control_config = args.coordinate_control_config,use_wandb=args.wandb, **config)
