@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import functional as F
+import torchvision.transforms as transforms
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import BaseOutput, logging
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
@@ -411,6 +412,43 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
             if "motion_modules." in name or "lora" in name: continue
             new_state_dict[name] = param
         return new_state_dict
+
+    @staticmethod
+    def preprocess_control_image(control_images,control_config,H,W,L): # the shape of the control_images: [b f c h w]
+       
+        assert control_images.shape[1] == L
+
+        image_transforms = transforms.Compose([
+            transforms.RandomResizedCrop(
+                (H, W), (1.0, 1.0), 
+                ratio=(W/H, W/H)
+            ),
+            transforms.ToTensor(),
+        ])
+
+        if control_config.get("normalize_condition_images", False):
+            def image_norm(image):
+                image = image.mean(dim=0, keepdim=True).repeat(3,1,1)
+                image -= image.min()
+                image /= image.max()
+                return image
+        else: image_norm = lambda x: x
+            
+        controlnet_images = [image_norm(image_transforms(control_images[i])) for i in len(control_images)]
+    
+        controlnet_images = torch.stack(controlnet_images).unsqueeze(0).cuda()
+        controlnet_images = rearrange(controlnet_images, "b f c h w -> b c f h w")
+
+        return controlnet_images
+        
+
+
+
+
+
+
+
+
 
     # Copied from diffusers.models.unet_2d_condition.UNet2DConditionModel.set_attention_slice
     def set_attention_slice(self, slice_size):

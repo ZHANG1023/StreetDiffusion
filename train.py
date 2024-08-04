@@ -91,6 +91,9 @@ def main(
 
     train_data: Dict,
     validation_data: Dict,
+    H: int,
+    W: int,
+    L: int,
     cfg_random_null_text: bool = True,
     cfg_random_null_text_ratio: float = 0.1,
     
@@ -219,45 +222,6 @@ def main(
         controlnet_state_dict.pop("animatediff_config", "")
         controlnet.load_state_dict(controlnet_state_dict)
         controlnet.cuda()
-
-        image_paths = control_config.controlnet_images
-        if isinstance(image_paths, str): image_paths = [image_paths]
-
-        print(f"controlnet image paths:")
-        for path in image_paths: print(path)
-        assert len(image_paths) <= control_config.L
-
-        image_transforms = transforms.Compose([
-            transforms.RandomResizedCrop(
-                (model_config.H, model_config.W), (1.0, 1.0), 
-                ratio=(model_config.W/model_config.H, model_config.W/model_config.H)
-            ),
-            transforms.ToTensor(),
-        ])
-
-        if control_config.get("normalize_condition_images", False):
-            def image_norm(image):
-                image = image.mean(dim=0, keepdim=True).repeat(3,1,1)
-                image -= image.min()
-                image /= image.max()
-                return image
-        else: image_norm = lambda x: x
-            
-        controlnet_images = [image_norm(image_transforms(Image.open(path).convert("RGB"))) for path in image_paths]
-
-        os.makedirs(os.path.join(savedir, "control_images"), exist_ok=True)
-        for i, image in enumerate(controlnet_images):
-            Image.fromarray((255. * (image.numpy().transpose(1,2,0))).astype(np.uint8)).save(f"{savedir}/control_images/{i}.png")
-
-        controlnet_images = torch.stack(controlnet_images).unsqueeze(0).cuda()
-        controlnet_images = rearrange(controlnet_images, "b f c h w -> b c f h w")
-
-        if controlnet.use_simplified_condition_embedding:
-            num_controlnet_images = controlnet_images.shape[2]
-            controlnet_images = rearrange(controlnet_images, "b c f h w -> (b f) c h w")
-            controlnet_images = vae.encode(controlnet_images * 2. - 1.).latent_dist.sample() * 0.18215
-            controlnet_images = rearrange(controlnet_images, "(b f) c h w -> b c f h w", f=num_controlnet_images)
-
 
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
@@ -389,9 +353,9 @@ def main(
         #train_dataloader.sampler.set_epoch(epoch)
         unet.train()
         
-        for step, batch in enumerate(train_dataloader):
-            if cfg_random_null_text:
-                batch['text'] = [name if random.random() > cfg_random_null_text_ratio else "" for name in batch['text']]
+        for step, batch, control_images in enumerate(train_dataloader):
+            if True: #default cfg_random_null_text, because here we don't need the text prompts, set batch['text'] to be ""
+                batch['text'] = ["" for name in batch['text']]
                 
             # Data batch sanity check
             if epoch == first_epoch and step == 0:
@@ -407,7 +371,10 @@ def main(
                         torchvision.utils.save_image(pixel_value, f"{output_dir}/sanity_check/{'-'.join(text.replace('/', '').split()[:10]) if not text == '' else f'{global_rank}-{idx}'}.png")
                     
             ### >>>> Training >>>> ###
-            
+            # preprocess the control images
+            control_images = controlnet.preprocess_control_images(control_images, control_config, H, W, L)
+            #                        
+
             # Convert videos to latent space            
             pixel_values = batch["pixel_values"].to(local_rank)
             video_length = pixel_values.shape[1]
@@ -453,6 +420,43 @@ def main(
             # Predict the noise residual and compute loss
             # Mixed-precision training
             with torch.cuda.amp.autocast(enabled=mixed_precision_training):
+                #### add control images to the unet
+
+                controlnet_images = controlnet_images.to(latents.device)
+                controlnet_cond_shape = list(controlnet_images.shape)
+
+                assert controlnet_cond_shape[2] == video_length
+                ### culculate the 3D coordinates positional encoding (same as the NeRF 3D coordinate positional encoding method)
+                controlnet_images = self.embed_fn(controlnet_images.view(-1,1))
+                controlnet_cond_shape +=[self.out_ch]
+                controlnet_cond = controlnet_images.view(controlnet_cond_shape)
+                
+                ###
+                controlnet_conditioning_mask_shape    = list(controlnet_cond.shape)
+                controlnet_conditioning_mask_shape[1] = 1
+                controlnet_conditioning_mask          = torch.zeros(controlnet_conditioning_mask_shape).to(latents.device)
+
+                controlnet_conditioning_mask[:,:,controlnet_image_index] = 1
+
+                down_block_additional_residuals, mid_block_additional_residual = self.controlnet(
+                    controlnet_noisy_latents, t,
+                    encoder_hidden_states=controlnet_prompt_embeds,
+                    controlnet_cond=controlnet_cond,
+                    conditioning_mask=controlnet_conditioning_mask,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    guess_mode=False, return_dict=False,
+                )
+                
+                # predict the noise residual
+                noise_pred = self.unet(
+                    noisy_latents, timesteps, 
+                    #encoder_hidden_states=text_embeddings,
+                    down_block_additional_residuals = down_block_additional_residuals,
+                    mid_block_additional_residual   = mid_block_additional_residual,
+                ).sample.to(dtype=latents_dtype)             
+                ####
+
+
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 

@@ -31,30 +31,6 @@ class dummy_WebVid10M(Dataset):
             transforms.CenterCrop(sample_size),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ])
-    
-    # def get_batch(self, idx):
-    #     video_dict = self.dataset[idx]
-    #     videoid, name, page_dir = video_dict['videoid'], video_dict['name'], video_dict['page_dir']
-        
-    #     video_dir    = os.path.join(self.video_folder, f"{videoid}.mp4")
-    #     video_reader = VideoReader(video_dir)
-    #     video_length = len(video_reader)
-        
-    #     if not self.is_image:
-    #         clip_length = min(video_length, (self.sample_n_frames - 1) * self.sample_stride + 1)
-    #         start_idx   = random.randint(0, video_length - clip_length)
-    #         batch_index = np.linspace(start_idx, start_idx + clip_length - 1, self.sample_n_frames, dtype=int)
-    #     else:
-    #         batch_index = [random.randint(0, video_length - 1)]
-
-    #     pixel_values = torch.from_numpy(video_reader.get_batch(batch_index).asnumpy()).permute(0, 3, 1, 2).contiguous()
-    #     pixel_values = pixel_values / 255.
-    #     del video_reader
-
-    #     if self.is_image:
-    #         pixel_values = pixel_values[0]
-        
-    #     return pixel_values, name
 
     def __len__(self):
         return self.length
@@ -63,12 +39,10 @@ class dummy_WebVid10M(Dataset):
        
         pixel_values = torch.rand(self.sample_n_frames,3,self.sample_size,self.sample_size)
         name = ""
-   
         pixel_values = self.pixel_transforms(pixel_values)
         sample = dict(pixel_values=pixel_values, text=name)
-        return sample
-
-
+        control_image = torch.rand(self.sample_n_frames,3,self.sample_size,self.sample_size)
+        return sample, control_image
 
 
 class WebVid10M(Dataset):
@@ -136,8 +110,6 @@ class WebVid10M(Dataset):
         pixel_values = self.pixel_transforms(pixel_values)
         sample = dict(pixel_values=pixel_values, text=name)
         return sample
-
-
 
 if __name__ == "__main__":
     from animatediff.utils.util import save_videos_grid
