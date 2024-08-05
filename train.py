@@ -209,7 +209,7 @@ def main(
         assert len(u) == 0
         
     # initialze our model from unet
-    controlnet = controlnet_images = None
+    controlnet = control_images = None
     if control_config.get("controlnet_path", "") != "":
         assert control_config.get("controlnet_images", "") != ""
         assert control_config.get("controlnet_config", "") != ""
@@ -380,7 +380,7 @@ def main(
                     
             ### >>>> Training >>>> ###
             # preprocess the control images
-            control_images = controlnet.preprocess_control_images(control_images, control_config, H, W, L)
+            control_images = controlnet.preprocess_control_images(control_images, control_config, H, W, L) # return shape b c f h w
             #                        
 
             # Convert videos to latent space            
@@ -430,27 +430,20 @@ def main(
             with torch.cuda.amp.autocast(enabled=mixed_precision_training):
                 #### add control images to the unet
 
-                controlnet_images = controlnet_images.to(latents.device)
-                controlnet_cond_shape = list(controlnet_images.shape)
+                control_images = control_images.to(latents.device)
+                controlnet_cond_shape = list(control_images.shape)
 
                 assert controlnet_cond_shape[2] == video_length
                 ### culculate the 3D coordinates positional encoding (same as the NeRF 3D coordinate positional encoding method)
-                controlnet_images = embed_fn(controlnet_images.view(-1,1))
-                controlnet_cond_shape +=[out_ch]
-                controlnet_cond = controlnet_images.view(controlnet_cond_shape)
+                control_images = embed_fn(control_images.view(-1,1))
+                controlnet_cond_shape[1] = out_ch
+                controlnet_cond = control_images.view(controlnet_cond_shape) #TODO check the reshape process
                 
                 ###
-                controlnet_conditioning_mask_shape    = list(controlnet_cond.shape)
-                controlnet_conditioning_mask_shape[1] = 1
-                controlnet_conditioning_mask          = torch.zeros(controlnet_conditioning_mask_shape).to(latents.device)
-
-                controlnet_conditioning_mask[:,:,controlnet_image_index] = 1
-
-                down_block_additional_residuals, mid_block_additional_residual = self.controlnet(
-                    controlnet_noisy_latents, t,
-                    encoder_hidden_states=controlnet_prompt_embeds,
+                down_block_additional_residuals, mid_block_additional_residual = controlnet(
+                    noisy_latents, timesteps,
+                    encoder_hidden_states=encoder_hidden_states, # same as text encoder_hidden_states of the unet 
                     controlnet_cond=controlnet_cond,
-                    conditioning_mask=controlnet_conditioning_mask,
                     conditioning_scale=controlnet_conditioning_scale,
                     guess_mode=False, return_dict=False,
                 )
@@ -458,7 +451,7 @@ def main(
                 # predict the noise residual
                 noise_pred = unet(
                     noisy_latents, timesteps, 
-                    #encoder_hidden_states=text_embeddings,
+                    encoder_hidden_states=encoder_hidden_states,
                     down_block_additional_residuals = down_block_additional_residuals,
                     mid_block_additional_residual   = mid_block_additional_residual,
                 ).sample.to(dtype=noisy_latents)             
@@ -466,7 +459,7 @@ def main(
 
 
                 # model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
             optimizer.zero_grad()
 

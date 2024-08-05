@@ -414,7 +414,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
         return new_state_dict
 
     @staticmethod
-    def preprocess_control_image(control_images,control_config,H,W,L): # the shape of the control_images: [b f c h w]
+    def preprocess_control_images(control_images,control_config,H,W,L): # the shape of the control_images: [b f c h w]
        
         assert control_images.shape[1] == L
 
@@ -441,13 +441,6 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
 
         return controlnet_images
         
-
-
-
-
-
-
-
 
 
     # Copied from diffusers.models.unet_2d_condition.UNet2DConditionModel.set_attention_slice
