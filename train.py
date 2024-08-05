@@ -40,7 +40,7 @@ from animatediff.data.dataset import WebVid10M,dummy_WebVid10M
 from animatediff.models.unet import UNet3DConditionModel
 from animatediff.pipelines.pipeline_animation import AnimationPipeline
 from animatediff.utils.util import save_videos_grid, zero_rank_print
-
+from animatediff.models.positional_encoding import get_embedder
 import deepspeed
 from accelerate import Accelerator
 # torchrun --nnodes=1 --nproc_per_node=7 train.py --config /disk1/haozhang/AnimateDiff/configs/training/v1/training.yaml
@@ -130,6 +130,10 @@ def main(
 
     global_seed: int = 42,
     is_debug: bool = False,
+    controlnet_conditioning_scale:float = 1.0,
+    multires: int = 4,
+    i_embed: int = 0,
+    #
 ):
     check_min_version("0.10.0.dev0")
     control_config  = OmegaConf.load(coordinate_control_config)
@@ -349,6 +353,10 @@ def main(
     # Support mixed-precision training
     scaler = torch.cuda.amp.GradScaler() if mixed_precision_training else None
 
+    # initialize the coordinate embedder
+    embed_fn, out_ch = get_embedder(multires, i_embed)
+    #
+
     for epoch in range(first_epoch, num_train_epochs):
         #train_dataloader.sampler.set_epoch(epoch)
         unet.train()
@@ -427,8 +435,8 @@ def main(
 
                 assert controlnet_cond_shape[2] == video_length
                 ### culculate the 3D coordinates positional encoding (same as the NeRF 3D coordinate positional encoding method)
-                controlnet_images = self.embed_fn(controlnet_images.view(-1,1))
-                controlnet_cond_shape +=[self.out_ch]
+                controlnet_images = embed_fn(controlnet_images.view(-1,1))
+                controlnet_cond_shape +=[out_ch]
                 controlnet_cond = controlnet_images.view(controlnet_cond_shape)
                 
                 ###
@@ -448,16 +456,16 @@ def main(
                 )
                 
                 # predict the noise residual
-                noise_pred = self.unet(
+                noise_pred = unet(
                     noisy_latents, timesteps, 
                     #encoder_hidden_states=text_embeddings,
                     down_block_additional_residuals = down_block_additional_residuals,
                     mid_block_additional_residual   = mid_block_additional_residual,
-                ).sample.to(dtype=latents_dtype)             
+                ).sample.to(dtype=noisy_latents)             
                 ####
 
 
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                # model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
             optimizer.zero_grad()
