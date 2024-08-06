@@ -371,7 +371,7 @@ def main(
             
             # Add noise to the latents according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps) #  torch.Size([1, 4, 16, 32, 32])
             
             print("noisy_latents.shape: ",noisy_latents.shape)
 
