@@ -373,6 +373,8 @@ def main(
             # (this is the forward diffusion process)
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
             
+            print("noisy_latents.shape: ",noisy_latents.shape)
+
             # Get the text embedding for conditioning
             with torch.no_grad():
                 prompt_ids = tokenizer(
