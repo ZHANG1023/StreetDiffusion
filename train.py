@@ -420,8 +420,8 @@ def main(
             control_latent = noisy_latents[:, :, :-1, :, :]
             target_latent = latent_shape[:,:,-1:,:,:]
 
-            control_latent_with_mask = torch.cat([control_latent, one_mask_shape], dim=1)
-            target_latent_with_mask = torch.cat([target_latent, zero_mask_shape], dim=1)
+            control_latent_with_mask = torch.cat([control_latent, one_mask], dim=1)
+            target_latent_with_mask = torch.cat([target_latent, zero_mask], dim=1)
             noisy_latents = torch.cat([control_latent_with_mask, target_latent_with_mask], dim=2)   
 
             latent_shape[1] = latent_shape[1] + 1
