@@ -224,7 +224,8 @@ def main(
         controlnet_state_dict = torch.load(control_config.controlnet_path, map_location="cpu")
         controlnet_state_dict = controlnet_state_dict["controlnet"] if "controlnet" in controlnet_state_dict else controlnet_state_dict
         controlnet_state_dict.pop("animatediff_config", "")
-        controlnet.load_state_dict(controlnet_state_dict)
+        controlnet_state_dict.pop("conv_in.weight")
+        controlnet.load_state_dict(controlnet_state_dict, strict=False)
         controlnet.cuda()
 
     # Freeze vae and text_encoder
@@ -418,14 +419,15 @@ def main(
             one_mask = torch.ones(one_mask_shape).to(latents.device)
 
             control_latent = noisy_latents[:, :, :-1, :, :]
-            target_latent = noisy_latents[:,:,-1,:,:]
+            target_latent = noisy_latents[:,:,-1,:,:].unsqueeze(2)
 
             control_latent_with_mask = torch.cat([control_latent, one_mask], dim=1)
             target_latent_with_mask = torch.cat([target_latent, zero_mask], dim=1)
+            
             noisy_latents = torch.cat([control_latent_with_mask, target_latent_with_mask], dim=2)   
-
+            latent_shape = list(latent_shape)
             latent_shape[1] = latent_shape[1] + 1
-            assert noisy_latents.shape == latent_shape
+            assert list(noisy_latents.shape) == latent_shape
 
             # Get the text embedding for conditioning
             with torch.no_grad():
@@ -452,9 +454,9 @@ def main(
 
                 assert controlnet_cond_shape[2] == video_length
                 ### culculate the 3D coordinates positional encoding (same as the NeRF 3D coordinate positional encoding method)
-                control_images = embed_fn(control_images.view(-1,1))
+                control_images = embed_fn(control_images.reshape(-1,1))
                 controlnet_cond_shape[1] = out_ch
-                controlnet_cond = control_images.view(controlnet_cond_shape) #TODO check the reshape process
+                controlnet_cond = control_images.reshape(controlnet_cond_shape) #TODO check the reshape process
                 
                 ###
                 down_block_additional_residuals, mid_block_additional_residual = controlnet(

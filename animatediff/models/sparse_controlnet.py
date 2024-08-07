@@ -123,7 +123,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
     @register_to_config
     def __init__(
         self,
-        in_channels: int = 4,
+        in_channels: int = 5, #default is 4, for our case, ti should be 5
         conditioning_channels: int = 24,  # Assume L = 4, thus the conditioning_channels is 4*2*3 = 24
         flip_sin_to_cos: bool = True,
         freq_shift: int = 0,
