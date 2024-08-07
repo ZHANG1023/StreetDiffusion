@@ -408,8 +408,25 @@ def main(
             
             # Add noise to the latents according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-            
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)  # noisy_latents.shape:  torch.Size([1, 4, 16, 32, 32])
+
+            ### add mask to the latents, mask denotes whether the latent is a control frame or not.
+            latent_shape = noisy_latents.shape
+            one_mask_shape = (latent_shape[0], 1 ,latent_shape[2] - 1, latent_shape[3], latent_shape[4])
+            zero_mask_shape = (latent_shape[0],1 ,1, latent_shape[3], latent_shape[4])
+            zero_mask = torch.zeros(zero_mask_shape).to(latents.device)
+            one_mask = torch.ones(one_mask_shape).to(latents.device)
+
+            control_latent = noisy_latents[:, :, :-1, :, :]
+            target_latent = latent_shape[:,:,-1:,:,:]
+
+            control_latent_with_mask = torch.cat([control_latent, one_mask_shape], dim=1)
+            target_latent_with_mask = torch.cat([target_latent, zero_mask_shape], dim=1)
+            noisy_latents = torch.cat([control_latent_with_mask, target_latent_with_mask], dim=2)   
+
+            latent_shape[1] = latent_shape[1] + 1
+            assert noisy_latents.shape == latent_shape
+
             # Get the text embedding for conditioning
             with torch.no_grad():
                 prompt_ids = tokenizer(

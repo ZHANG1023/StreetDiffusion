@@ -42,7 +42,7 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
     def __init__(
         self,
         sample_size: Optional[int] = None,
-        in_channels: int = 4,
+        in_channels: int = 5, # because the mask is concatenated to the input latent
         out_channels: int = 4,
         center_input_sample: bool = False,
         flip_sin_to_cos: bool = True,
