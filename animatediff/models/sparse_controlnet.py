@@ -168,7 +168,7 @@ class SparseControlNetModel(ModelMixin, ConfigMixin):
             "causal_temporal_attention": False,
         },
 
-        concate_conditioning_mask: bool = True,
+        concate_conditioning_mask: bool = False,
         use_simplified_condition_embedding:  bool = False,
 
         set_noisy_sample_input_to_zero: bool = False,

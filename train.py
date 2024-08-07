@@ -225,6 +225,8 @@ def main(
         controlnet_state_dict = controlnet_state_dict["controlnet"] if "controlnet" in controlnet_state_dict else controlnet_state_dict
         controlnet_state_dict.pop("animatediff_config", "")
         controlnet_state_dict.pop("conv_in.weight")
+        controlnet_state_dict.pop("controlnet_cond_embedding.weight")
+        
         controlnet.load_state_dict(controlnet_state_dict, strict=False)
         controlnet.cuda()
 
