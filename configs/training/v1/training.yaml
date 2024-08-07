@@ -32,7 +32,7 @@ train_data:
   video_folder:    "/mnt/petrelfs/guoyuwei/projects/datasets/webvid/2M_val"
   sample_size:     256
   sample_stride:   4
-  sample_n_frames: 16
+  sample_n_frames: 8 # default is 16. For our case, it is 8
 
 validation_data:
   prompts:

@@ -361,7 +361,7 @@ def main(
         #train_dataloader.sampler.set_epoch(epoch)
         unet.train()
         
-        for step, batch, control_images in enumerate(train_dataloader):
+        for step, (batch, control_images) in enumerate(train_dataloader):
             if True: #default cfg_random_null_text, because here we don't need the text prompts, set batch['text'] to be ""
                 batch['text'] = ["" for name in batch['text']]
                 
@@ -418,7 +418,7 @@ def main(
             one_mask = torch.ones(one_mask_shape).to(latents.device)
 
             control_latent = noisy_latents[:, :, :-1, :, :]
-            target_latent = latent_shape[:,:,-1:,:,:]
+            target_latent = noisy_latents[:,:,-1,:,:]
 
             control_latent_with_mask = torch.cat([control_latent, one_mask], dim=1)
             target_latent_with_mask = torch.cat([target_latent, zero_mask], dim=1)
@@ -474,6 +474,9 @@ def main(
                 ).sample.to(dtype=noisy_latents)             
                 ####
 
+                # mask out the conditional frames
+                noise_pred = noise_pred[:,:,-1,:,:]
+                target = target[:,:,-1,:,:]
 
                 # model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
